@@ -9,23 +9,30 @@
 %global py2_prefix python2
 %endif
 
+%global bundled_lib_dir    bundled
+# python-typing
+%global typing_version	3.5.2.2
+%global typing_dir	%{bundled_lib_dir}/typing
+
 %global srcname msrest
 
 %global common_summary AutoRest swagger generator Python client runtime
 %global common_description %{common_summary}.
 
 Name:           python-%{srcname}
-Version:        0.4.18
-Release:        1%{?dist}
+Version:        0.5.4
+Release:        0%{?dist}.1
 Summary:        %{common_summary}
 
 Group:          System Environment/Libraries
 License:        MIT
 URL:            https://github.com/Azure/msrest-for-python/
 Source0:        %{srcname}-%{version}.tar.gz
+Source1:        typing-%{typing_version}.tar.gz
 # - Disable versioned dependencies not yet available in Fedora/EPEL
 # - Fix setup.py for older versions of setuptools (EPEL)
-Patch0:         %{name}-0.4.11-build.patch
+Patch0:         %{name}-0.5.4-build.patch
+Patch1:         bundled-libs.patch
 
 BuildRequires:  %{py2_prefix}-setuptools
 BuildRequires:  python-devel
@@ -34,6 +41,8 @@ Requires:       python-enum34
 Requires:       python-isodate
 Requires:       %{py2_prefix}-requests
 Requires:       %{py2_prefix}-requests-oauthlib
+
+Provides: bundled(python-typing) = %{typing_version}
 
 %if 0%{?_with_python3}
 BuildRequires:  python3-devel
@@ -74,21 +83,43 @@ Requires:       python3-requests-oauthlib
 
 
 %prep
-%autosetup -n %{srcname}-for-python-%{version}
+%setup -q -n %{srcname}-for-python-%{version}
+%patch0 -p1
+
+# add bundled libraries path
+%patch1 -p1
 
 # Remove failing test
 # TODO: report bug upstream
 rm tests/test_serialization.py
 
+# bundled libraries
+mkdir %{bundled_lib_dir}
+
+# python-typing bundle
+tar -xzf %SOURCE1 -C %{bundled_lib_dir}
+mv %{bundled_lib_dir}/typing-%{typing_version} %{typing_dir}
+cp %{typing_dir}/LICENSE typing_LICENSE
+cp %{typing_dir}/README.rst typing_README.rst
 
 %build
 %py2_build
 %{?_with_python3:%py3_build}
 
+# python-typing bundle
+pushd %{typing_dir}
+%{__python2} setup.py build
+popd
+
 
 %install
 %py2_install
 %{?_with_python3:%py3_install}
+
+# python-typing bundle
+pushd %{typing_dir}
+%{__python2} setup.py install -O1 --skip-build --root %{buildroot} --install-lib /usr/lib/%{name}/%{bundled_lib_dir}
+popd
 
 
 %check
@@ -99,20 +130,28 @@ rm tests/test_serialization.py
 
 
 %files -n python-%{srcname}
-%doc README.rst
-%license LICENSE.md
+%doc README.rst typing_README.rst
+%license LICENSE.md typing_LICENSE
 %{python2_sitelib}/*
+
+# bundled libraries
+%dir /usr/lib/%{name}
+/usr/lib/%{name}/%{bundled_lib_dir}
 
 
 %if 0%{?_with_python3}
 %files -n python3-%{srcname}
-%doc README.rst
-%license LICENSE.md
+%doc README.rst typing_README.rst
+%license LICENSE.md typing_LICENSE
 %{python3_sitelib}/*
 %endif
 
 
 %changelog
+* Thu May 16 2019 Oyvind Albrigtsen <oalbrigt@redhat.com> - 0.5.4-0.1
+- Update to 0.5.4
+  Resolves: rhbz#1709118
+
 * Fri Nov 10 2017 Mohamed El Morabity <melmorabity@fedoraproject.org> - 0.4.18-1
 - Update to 0.4.18
 

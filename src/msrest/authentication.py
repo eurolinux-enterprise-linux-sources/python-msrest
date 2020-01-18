@@ -23,6 +23,7 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
+from typing import Optional, Dict
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -36,34 +37,46 @@ class Authentication(object):
 
     header = "Authorization"
 
-    def signed_session(self):
-        """Create requests session with any required auth headers
-        applied.
+    def signed_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
+        """Create requests session with any required auth headers applied.
 
-        :rtype: requests.Session.
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
+
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
         """
-        return requests.Session()
+        return session or requests.Session()
 
 
 class BasicAuthentication(Authentication):
-    """Implmentation of Basic Authentication.
+    """Implementation of Basic Authentication.
 
     :param str username: Authentication username.
     :param str password: Authentication password.
     """
 
     def __init__(self, username, password):
+        # type: (str, str) -> None
         self.scheme = 'Basic'
         self.username = username
         self.password = password
 
-    def signed_session(self):
+    def signed_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
         """Create requests session with any required auth headers
         applied.
 
-        :rtype: requests.Session.
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
+
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
         """
-        session = super(BasicAuthentication, self).signed_session()
+        session = super(BasicAuthentication, self).signed_session(session)
         session.auth = HTTPBasicAuth(self.username, self.password)
         return session
 
@@ -72,14 +85,16 @@ class BasicTokenAuthentication(Authentication):
     """Simple Token Authentication.
     Does not adhere to OAuth, simply adds provided token as a header.
 
-    :param dict token: Authentication token, must have 'access_token' key.
+    :param dict[str,str] token: Authentication token, must have 'access_token' key.
     """
 
     def __init__(self, token):
+        # type: (Dict[str, str]) -> None
         self.scheme = 'Bearer'
         self.token = token
 
     def set_token(self):
+        # type: () -> None
         """Should be used to define the self.token attribute.
 
         In this implementation, does nothing since the token is statically provided
@@ -87,13 +102,19 @@ class BasicTokenAuthentication(Authentication):
         """
         pass
 
-    def signed_session(self):
+    def signed_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
         """Create requests session with any required auth headers
         applied.
 
-        :rtype: requests.Session.
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
+
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
         """
-        session = super(BasicTokenAuthentication, self).signed_session()
+        session = super(BasicTokenAuthentication, self).signed_session(session)
         header = "{} {}".format(self.scheme, self.token['access_token'])
         session.headers['Authorization'] = header
         return session
@@ -101,50 +122,67 @@ class BasicTokenAuthentication(Authentication):
 
 class OAuthTokenAuthentication(BasicTokenAuthentication):
     """OAuth Token Authentication.
+
     Requires that supplied token contains an expires_in field.
 
     :param str client_id: Account Client ID.
-    :param dict token: OAuth2 token.
+    :param dict[str,str] token: OAuth2 token.
     """
 
     def __init__(self, client_id, token):
-        self.scheme = 'Bearer'
+        # type: (str, Dict[str, str]) -> None
+        super(OAuthTokenAuthentication, self).__init__(token)
         self.id = client_id
-        self.token = token
         self.store_key = self.id
 
     def construct_auth(self):
+        # type: () -> str
         """Format token header.
 
-        :rtype: str.
+        :rtype: str
         """
         return "{} {}".format(self.scheme, self.token)
 
-    def refresh_session(self):
+    def refresh_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
         """Return updated session if token has expired, attempts to
         refresh using refresh token.
 
-        :rtype: requests.Session.
-        """
-        return self.signed_session()
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
 
-    def signed_session(self):
-        """Create requests session with any required auth headers
-        applied.
-
-        :rtype: requests.Session.
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
         """
-        return oauth.OAuth2Session(self.id, token=self.token)
+        return self.signed_session(session)
+
+    def signed_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
+        """Create requests session with any required auth headers applied.
+
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
+
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
+        """
+        session = session or requests.Session()  # Don't call super on purpose, let's "auth" manage the headers.
+        session.auth = oauth.OAuth2(self.id, token=self.token)
+        return session
 
 class ApiKeyCredentials(Authentication):
     """Represent the ApiKey feature of Swagger.
 
-    Dict should be dict[str, str] to be accepted by requests.
+    Dict should be dict[str,str] to be accepted by requests.
 
-    :param dict[str, str] in_headers: Headers part of the ApiKey
-    :param dict[str, str] in_query: ApiKey in the query as parameters.
+    :param dict[str,str] in_headers: Headers part of the ApiKey
+    :param dict[str,str] in_query: ApiKey in the query as parameters
     """
     def __init__(self, in_headers=None, in_query=None):
+        # type: (Optional[Dict[str, str]], Optional[Dict[str, str]]) -> None
+        super(ApiKeyCredentials, self).__init__()
         if in_headers is None:
             in_headers = {}
         if in_query is None:
@@ -156,14 +194,24 @@ class ApiKeyCredentials(Authentication):
         self.in_headers = in_headers
         self.in_query = in_query
 
-    def signed_session(self):
+    def signed_session(self, session=None):
+        # type: (Optional[requests.Session]) -> requests.Session
         """Create requests session with ApiKey.
 
-        :rtype: requests.Session.
+        If a session object is provided, configure it directly. Otherwise,
+        create a new session and return it.
+
+        :param session: The session to configure for authentication
+        :type session: requests.Session
+        :rtype: requests.Session
         """
-        session = super(ApiKeyCredentials, self).signed_session()
+        session = super(ApiKeyCredentials, self).signed_session(session)
         session.headers.update(self.in_headers)
-        session.params.update(self.in_query)
+        try:
+            # params is actually Union[bytes, MutableMapping[Text, Text]]
+            session.params.update(self.in_query) # type: ignore
+        except AttributeError:  # requests.params can be bytes
+            raise ValueError("session.params must be a dict to be used in ApiKeyCredentials")
         return session
 
 class CognitiveServicesCredentials(ApiKeyCredentials):
@@ -175,6 +223,7 @@ class CognitiveServicesCredentials(ApiKeyCredentials):
     _subscription_key_header = 'Ocp-Apim-Subscription-Key'
 
     def __init__(self, subscription_key):
+        # type: (str) -> None
         if not subscription_key:
             raise ValueError("Subscription key cannot be None")
         super(CognitiveServicesCredentials, self).__init__(
@@ -183,3 +232,22 @@ class CognitiveServicesCredentials(ApiKeyCredentials):
                 'X-BingApis-SDK-Client': 'Python-SDK'
             }
         )
+
+class TopicCredentials(ApiKeyCredentials):
+    """Event Grid authentication.
+
+    :param str topic_key: The Event Grid topic key
+    """
+
+    _topic_key_header = 'aeg-sas-key'
+
+    def __init__(self, topic_key):
+        # type: (str) -> None
+        if not topic_key:
+            raise ValueError("Topic key cannot be None")
+        super(TopicCredentials, self).__init__(
+            in_headers={
+                self._topic_key_header: topic_key,
+            }
+        )
+    

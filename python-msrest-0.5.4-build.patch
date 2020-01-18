@@ -1,10 +1,10 @@
-diff -up ./setup.py.orig ./setup.py
---- ./setup.py.orig	2017-06-21 21:09:56.000000000 +0200
-+++ ./setup.py	2017-06-30 14:09:35.185100223 +0200
-@@ -25,6 +25,17 @@
+diff -uNr a/setup.py b/setup.py
+--- a/setup.py	2018-07-13 00:15:27.000000000 +0200
++++ b/setup.py	2019-05-03 11:50:56.913761291 +0200
+@@ -25,6 +25,18 @@
  # --------------------------------------------------------------------------
  
- from setuptools import setup
+ from setuptools import setup, find_packages
 +import sys
 +
 +requirements = [
@@ -15,22 +15,24 @@ diff -up ./setup.py.orig ./setup.py
 +]
 +if sys.version_info[0] == 2:
 +    requirements.append('enum34>=1.0.4')
++    requirements.append('typing')
 +
  
  setup(
      name='msrest',
-@@ -47,13 +58,5 @@ setup(
+@@ -46,14 +58,5 @@
          'Programming Language :: Python :: 3.6',
          'License :: OSI Approved :: MIT License',
          'Topic :: Software Development'],
 -    install_requires=[
--        "requests~=2.14",
+-        "requests~=2.16",
 -        "requests_oauthlib>=0.5.0",
--        "isodate>=0.5.4",
+-        "isodate>=0.6.0",
 -        "certifi>=2017.4.17",
 -    ],
 -    extras_require={
 -        ":python_version<'3.4'": ['enum34>=1.0.4'],
+-        ":python_version<'3.5'": ['typing'],
 -    }
 +    install_requires=requirements
  )

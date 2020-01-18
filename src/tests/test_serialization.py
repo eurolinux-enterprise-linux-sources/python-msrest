@@ -1,6 +1,6 @@
 ﻿#--------------------------------------------------------------------------
 #
-# Copyright (c) Microsoft Corporation. All rights reserved. 
+# Copyright (c) Microsoft Corporation. All rights reserved.
 #
 # The MIT License (MIT)
 #
@@ -29,12 +29,14 @@ import json
 import isodate
 import logging
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import unittest
 try:
     from unittest import mock
 except ImportError:
     import mock
+
+import xml.etree.ElementTree as ET
 
 from requests import Response
 
@@ -44,6 +46,7 @@ from msrest.exceptions import SerializationError, DeserializationError, Validati
 
 from . import storage_models
 
+import pytest
 
 class Resource(Model):
     """Resource
@@ -68,13 +71,13 @@ class Resource(Model):
     }
 
     def __init__(self, location, id=None, name=None, type=None, tags=None, **kwargs):
+        super(Resource, self).__init__(**kwargs)
         self.id = id
         self.name = name
         self.type = type
         self.location = location
         self.tags = tags
 
-        super(Resource, self).__init__(**kwargs)
 
 class GenericResource(Resource):
     """
@@ -101,17 +104,67 @@ class GenericResource(Resource):
         'properties': {'key': 'properties', 'type': 'object'},
     }
 
-    def __init__(self, location, id=None, name=None, type=None, tags=None, plan=None, properties=None, **kwargs):
+    def __init__(self, location, id=None, name=None, type=None, tags=None, plan=None, properties=None):
+        super(GenericResource, self).__init__(location, id=id, name=name, type=type, tags=tags)
         self.plan = plan
         self.properties = properties
-
-        super(GenericResource, self).__init__(location, id=id, name=name, type=type, tags=tags, **kwargs)
 
 class TestModelDeserialization(unittest.TestCase):
 
     def setUp(self):
         self.d = Deserializer({'Resource':Resource, 'GenericResource':GenericResource})
         return super(TestModelDeserialization, self).setUp()
+
+    def test_model_kwargs(self):
+
+        class MyModel(Model):
+            _validation = {
+                'id': {'readonly': True},
+                'name': {'required': True},
+            }
+            _attribute_map = {
+                'id': {'key': 'id', 'type': 'str'},
+                'name': {'key': 'name', 'type': 'str'},
+                'location': {'key': 'location', 'type': 'str'},
+            }
+            def __init__(self, **kwargs):
+                super(MyModel, self).__init__(**kwargs)
+                self.id = None
+                self.name = kwargs.get('name', None)
+                self.location = kwargs.get('location', None)
+
+        validation = MyModel().validate()
+        self.assertEquals(str(validation[0]), "Parameter 'MyModel.name' can not be None.")
+
+    @unittest.skipIf(sys.version_info < (3,4), "assertLogs not supported before 3.4")
+    def test_model_kwargs_logs(self):
+
+        class MyModel(Model):
+            _validation = {
+                'id': {'readonly': True},
+                'name': {'required': True},
+            }
+            _attribute_map = {
+                'id': {'key': 'id', 'type': 'str'},
+                'name': {'key': 'name', 'type': 'str'},
+                'location': {'key': 'location', 'type': 'str'},
+            }
+            def __init__(self, **kwargs):
+                super(MyModel, self).__init__(**kwargs)
+                self.id = None
+                self.name = kwargs.get('name', None)
+                self.location = kwargs.get('location', None)
+
+        with self.assertLogs('msrest.serialization', level='WARNING') as cm:
+            MyModel(name="test", id="123") # Should log that id is readonly
+        self.assertEquals(len(cm.output), 1)
+        self.assertIn("attribute id", cm.output[0])
+        self.assertIn("Readonly", cm.output[0])
+
+        with self.assertLogs('msrest.serialization', level='WARNING') as cm:
+            MyModel(something="ioprez") # Should log that this is unknown
+        self.assertEquals(len(cm.output), 1)
+        self.assertIn("not a known attribute", cm.output[0])
 
     def test_response(self):
 
@@ -289,7 +342,7 @@ class TestRuntimeSerialized(unittest.TestCase):
             _validation = {
                 'name': {'min_length': 3},
                 'display_names': {'min_items': 2},
-            }                
+            }
             _attribute_map = {
                 'name': {'key':'name', 'type':'str'},
                 'rec_list': {'key':'rec_list', 'type':'[[TestObj]]'},
@@ -297,7 +350,7 @@ class TestRuntimeSerialized(unittest.TestCase):
                 'display_names': {'key': 'display_names', 'type': '[str]'},
                 'obj': {'key':'obj', 'type':'TestObj'},
             }
-            
+
             def __init__(self, name):
                 self.name = name
                 self.rec_list = None
@@ -328,15 +381,6 @@ class TestRuntimeSerialized(unittest.TestCase):
         """
         obj = self.s.serialize_object({'test': None})
         self.assertIsNone(obj['test'])
-
-    def test_obj_without_attr_map(self):
-        """
-        Test serializing an object with no attribute_map.
-        """
-        test_obj = type("BadTestObj", (), {})
-
-        with self.assertRaises(SerializationError):
-            self.s._serialize(test_obj)
 
     def test_obj_with_malformed_map(self):
         """
@@ -684,6 +728,13 @@ class TestRuntimeSerialized(unittest.TestCase):
         date_str = Serializer.serialize_iso(date_obj)
         self.assertEqual(date_str, '9999-12-31T23:59:59.999999Z')
 
+        date_obj = isodate.parse_datetime('2012-02-24T00:53:52.000001Z')
+        date_str = Serializer.serialize_iso(date_obj)
+        assert date_str == '2012-02-24T00:53:52.000001Z'
+
+        date_obj = isodate.parse_datetime('2012-02-24T00:53:52.780Z')
+        date_str = Serializer.serialize_iso(date_obj)
+        assert date_str == '2012-02-24T00:53:52.780Z'
 
     def test_serialize_primitive_types(self):
 
@@ -740,6 +791,24 @@ class TestRuntimeSerialized(unittest.TestCase):
         with self.assertRaises(SerializationError):
             self.s.serialize_iter("I am a string", 'str')
 
+    def test_serialize_from_dict_datetime(self):
+        class DateTimeTest(Model):
+            _attribute_map = {
+                'birthday':{'key':'birthday','type':'iso-8601'},
+            }
+            def __init__(self, birthday):
+                self.birthday = birthday
+
+        serializer = Serializer({
+            'DateTimeTest': DateTimeTest
+        })
+
+        mydate = serializer.body(
+            {'birthday': datetime(1980, 12, 27)},
+            'DateTimeTest'
+        )
+        assert mydate["birthday"] == "1980-12-27T00:00:00.000Z"
+
     def test_serialize_json_obj(self):
 
         class ComplexId(Model):
@@ -781,27 +850,27 @@ class TestRuntimeSerialized(unittest.TestCase):
 
         message =self.s._serialize(ComplexJson())
 
-        output = { 
-            'p1': 'value1', 
-            'p2': 'value2', 
-            'top_date': '2014-01-01T00:00:00.000Z', 
-            'top_dates': [ 
-                '1900-01-01T00:00:00.000Z', 
-                '1901-01-01T00:00:00.000Z' 
-            ], 
+        output = {
+            'p1': 'value1',
+            'p2': 'value2',
+            'top_date': '2014-01-01T00:00:00.000Z',
+            'top_dates': [
+                '1900-01-01T00:00:00.000Z',
+                '1901-01-01T00:00:00.000Z'
+            ],
             'insider': {
-                'k1': '2015-01-01T00:00:00.000Z', 
-                'k2': '2016-01-01T00:00:00.000Z', 
-                'k3': '2017-01-01T00:00:00.000Z' 
-            }, 
-            'top_complex': { 
-                'id': 1, 
-                'name': 'Joey', 
-                'age': 23.36, 
-                'male': True, 
-                'birthday': '1992-01-01T00:00:00.000Z', 
-                'anniversary': '2013-12-08T00:00:00.000Z', 
-            } 
+                'k1': '2015-01-01T00:00:00.000Z',
+                'k2': '2016-01-01T00:00:00.000Z',
+                'k3': '2017-01-01T00:00:00.000Z'
+            },
+            'top_complex': {
+                'id': 1,
+                'name': 'Joey',
+                'age': 23.36,
+                'male': True,
+                'birthday': '1992-01-01T00:00:00.000Z',
+                'anniversary': '2013-12-08T00:00:00.000Z',
+            }
         }
         self.maxDiff = None
         self.assertEqual(message, output)
@@ -883,27 +952,27 @@ class TestRuntimeSerialized(unittest.TestCase):
                 self.d_type = 'siamese'
 
         message = {
-            "Animals": [ 
-            { 
-            "dType": "dog", 
-            "likesDogFood": True, 
-            "Name": "Fido" 
-            }, 
-            { 
-            "dType": "cat", 
-            "likesMice": False, 
-            "dislikes": { 
-            "dType": "dog", 
-            "likesDogFood": True, 
-            "Name": "Angry" 
-            }, 
-            "Name": "Felix" 
-            }, 
-            { 
-            "dType": "siamese", 
-            "Color": "grey", 
-            "likesMice": True, 
-            "Name": "Finch" 
+            "Animals": [
+            {
+            "dType": "dog",
+            "likesDogFood": True,
+            "Name": "Fido"
+            },
+            {
+            "dType": "cat",
+            "likesMice": False,
+            "dislikes": {
+            "dType": "dog",
+            "likesDogFood": True,
+            "Name": "Angry"
+            },
+            "Name": "Felix"
+            },
+            {
+            "dType": "siamese",
+            "Color": "grey",
+            "likesMice": True,
+            "Name": "Finch"
             }]}
 
         zoo = Zoo()
@@ -942,22 +1011,22 @@ class TestRuntimeSerialized(unittest.TestCase):
         serialized = self.s.body({
             "animals": [{
                 "dType": "dog",
-                "likes_dog_food": True, 
-                "name": "Fido" 
-            },{ 
-                "dType": "cat", 
-                "likes_mice": False, 
-                "dislikes": { 
-                    "dType": "dog", 
-                    "likes_dog_food": True, 
-                    "name": "Angry" 
-                }, 
-                "name": "Felix" 
-            },{ 
-                "dType": "siamese", 
-                "color": "grey", 
-                "likes_mice": True, 
-                "name": "Finch" 
+                "likes_dog_food": True,
+                "name": "Fido"
+            },{
+                "dType": "cat",
+                "likes_mice": False,
+                "dislikes": {
+                    "dType": "dog",
+                    "likes_dog_food": True,
+                    "name": "Angry"
+                },
+                "name": "Felix"
+            },{
+                "dType": "siamese",
+                "color": "grey",
+                "likes_mice": True,
+                "name": "Finch"
             }]
         }, "Zoo")
         self.assertEqual(serialized, message)
@@ -996,10 +1065,171 @@ class TestRuntimeSerialized(unittest.TestCase):
                 "KeyD": 4
             }
         }
-        
+
         self.assertEqual(serialized, message)
 
         self.s.dependencies = old_dependencies
+
+    def test_additional_properties_no_send(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"}
+            }
+
+            def __init__(self, name=None):
+                self.name = name
+
+        o = AdditionalTest(
+            name='test'
+        )
+        o.additional_properties={
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        expected_message = {
+            "Name": "test"
+        }
+
+        s = Serializer({'AdditionalTest': AdditionalTest})
+
+        serialized = s.body(o, 'AdditionalTest')
+
+        self.assertEqual(serialized, expected_message)
+
+
+    def test_additional_properties_manual(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"}
+            }
+
+            def __init__(self, name=None):
+                self.name = name
+        AdditionalTest.enable_additional_properties_sending()
+
+        o = AdditionalTest(
+            name='test'
+        )
+        o.additional_properties={
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        expected_message = {
+            "Name": "test",
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        s = Serializer({'AdditionalTest': AdditionalTest})
+
+        serialized = s.body(o, 'AdditionalTest')
+
+        self.assertEqual(serialized, expected_message)
+
+
+    def test_additional_properties(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"},
+                'additional_properties': {'key': '', 'type': '{object}'}
+            }
+
+            def __init__(self, name=None, additional_properties=None):
+                self.name = name
+                self.additional_properties = additional_properties
+
+        o = AdditionalTest(
+            name='test',
+            additional_properties={
+                "PropInt": 2,
+                "PropStr": "AdditionalProperty",
+                "PropArray": [1,2,3],
+                "PropDict": {"a": "b"}
+            }
+        )
+
+        expected_message = {
+            "Name": "test",
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        s = Serializer({'AdditionalTest': AdditionalTest})
+
+        serialized = s.body(o, 'AdditionalTest')
+
+        self.assertEqual(serialized, expected_message)
+
+    def test_additional_properties_declared(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"},
+                'additional_properties': {'key': 'AddProp', 'type': '{object}'}
+            }
+
+            def __init__(self, name=None, additional_properties=None):
+                self.name = name
+                self.additional_properties = additional_properties
+
+        o = AdditionalTest(
+            name='test',
+            additional_properties={
+                "PropInt": 2,
+                "PropStr": "AdditionalProperty",
+                "PropArray": [1,2,3],
+                "PropDict": {"a": "b"}
+            }
+        )
+
+        expected_message = {
+            "Name": "test",
+            "AddProp": {
+                "PropInt": 2,
+                "PropStr": "AdditionalProperty",
+                "PropArray": [1,2,3],
+                "PropDict": {"a": "b"}
+            }
+        }
+
+        s = Serializer({'AdditionalTest': AdditionalTest})
+
+        serialized = s.body(o, 'AdditionalTest')
+
+        self.assertEqual(serialized, expected_message)
+
+        # Make it declared as a property AND readonly
+        AdditionalTest._validation = {
+            'additional_properties': {'readonly': True}
+        }
+
+        expected_message = {
+            "Name": "test"
+        }
+
+        s = Serializer({'AdditionalTest': AdditionalTest})
+
+        serialized = s.body(o, 'AdditionalTest')
+
+        self.assertEqual(serialized, expected_message)
+
 
 class TestRuntimeDeserialized(unittest.TestCase):
 
@@ -1028,6 +1258,47 @@ class TestRuntimeDeserialized(unittest.TestCase):
     def setUp(self):
         self.d = Deserializer()
         return super(TestRuntimeDeserialized, self).setUp()
+
+    def test_unpack(self):
+        result = Deserializer._unpack_content("<groot/>", content_type="application/xml")
+        assert result.tag == "groot"
+
+        # Catch some weird situation where content_type is XML, but content is JSON
+        result = Deserializer._unpack_content('{"ugly": true}', content_type="application/xml")
+        assert result["ugly"] is True
+
+        # Be sure I catch the correct exception if it's neither XML nor JSON
+        with pytest.raises(ET.ParseError):
+            result = Deserializer._unpack_content('gibberish', content_type="application/xml")
+        with pytest.raises(ET.ParseError):
+            result = Deserializer._unpack_content('{{gibberish}}', content_type="application/xml")
+
+        result = Deserializer._unpack_content('{"success": true}', content_type="application/json")
+        assert result["success"] is True
+
+        # For compat, if no content-type, and direct string, just return it
+        result = Deserializer._unpack_content('data')
+        assert result == "data"
+
+        # Decore bytes
+        result = Deserializer._unpack_content(b'data')
+        assert result == "data"
+
+        response = Response()
+        response.headers["content-type"] = "application/json"
+        response._content = b'{"success": true}'
+        response._content_consumed = True
+
+        result = Deserializer._unpack_content(response)
+        assert result["success"] is True
+
+        # If no content-type, assume it's JSON
+        response = Response()
+        response._content = b'{"success": true}'
+        response._content_consumed = True
+
+        result = Deserializer._unpack_content(response)
+        assert result["success"] is True
 
     def test_cls_method_deserialization(self):
         json_data = {
@@ -1061,6 +1332,10 @@ class TestRuntimeDeserialized(unittest.TestCase):
         }
         self.TestObj.from_dict(attr_data)
         assert_model(model_instance)
+
+    def test_array_deserialize(self):
+        result = self.d('[str]', ["a","b"])
+        assert result == ['a','b']
 
     def test_personalize_deserialization(self):
 
@@ -1138,11 +1413,11 @@ class TestRuntimeDeserialized(unittest.TestCase):
 
             _validation = {
                 'name': {'min_length': 3},
-            }                
+            }
             _attribute_map = {
                 'name': {'key':'RestName', 'type':'str'},
             }
-            
+
             def __init__(self, name):
                 self.name = name
 
@@ -1426,7 +1701,7 @@ class TestRuntimeDeserialized(unittest.TestCase):
         with self.assertRaises(DeserializationError):
             response = self.d(self.TestObj, response_data)
             deserialized_list = [d for d in response.attr_d]
-        
+
         response_data.text = json.dumps({'AttrD': "NotAList"})
         with self.assertRaises(DeserializationError):
             response = self.d(self.TestObj, response_data)
@@ -1540,6 +1815,14 @@ class TestRuntimeDeserialized(unittest.TestCase):
         h =  self.d('object', {"test":[1,2,3,4,5]})
         self.assertEqual(h, {"test":[1,2,3,4,5]})
 
+    def test_deserialize_date(self):
+        # https://github.com/OAI/OpenAPI-Specification/blob/4d5a749c365682e6718f5a78f113a64391911647/versions/2.0.md#data-types
+        a = Deserializer.deserialize_date('2018-12-27')
+        self.assertEquals(date(2018,12,27), a)
+
+        with self.assertRaises(DeserializationError):
+            a = Deserializer.deserialize_date('201O-18-90')
+
     def test_deserialize_datetime(self):
 
         a = Deserializer.deserialize_iso('9999-12-31T23:59:59+23:59')
@@ -1576,6 +1859,18 @@ class TestRuntimeDeserialized(unittest.TestCase):
         self.assertEqual(utc.tm_min, 0)
         self.assertEqual(utc.tm_sec, 0)
         self.assertEqual(a.microsecond, 0)
+
+        # Only supports microsecond precision up to 6 digits, and chop off the rest
+        a = Deserializer.deserialize_iso('2018-01-20T18:35:24.666666312345Z')
+        utc = a.utctimetuple()
+
+        self.assertEqual(utc.tm_year, 2018)
+        self.assertEqual(utc.tm_mon, 1)
+        self.assertEqual(utc.tm_mday, 20)
+        self.assertEqual(utc.tm_hour, 18)
+        self.assertEqual(utc.tm_min, 35)
+        self.assertEqual(utc.tm_sec, 24)
+        self.assertEqual(a.microsecond, 666666)
 
         #with self.assertRaises(DeserializationError):
         #    a = Deserializer.deserialize_iso('1996-01-01T23:01:54-22:66') #TODO
@@ -1621,6 +1916,17 @@ class TestRuntimeDeserialized(unittest.TestCase):
 
         with self.assertRaises(DeserializationError):
             a = Deserializer.deserialize_iso('Happy New Year 2016')
+
+        a = Deserializer.deserialize_iso('2012-02-24T00:53:52.780Z')
+        utc = a.utctimetuple()
+
+        self.assertEqual(utc.tm_year, 2012)
+        self.assertEqual(utc.tm_mon, 2)
+        self.assertEqual(utc.tm_mday, 24)
+        self.assertEqual(utc.tm_hour, 0)
+        self.assertEqual(utc.tm_min, 53)
+        self.assertEqual(utc.tm_sec, 52)
+        self.assertEqual(a.microsecond, 780000)
 
     def test_polymorphic_deserialization(self):
 
@@ -1695,24 +2001,24 @@ class TestRuntimeDeserialized(unittest.TestCase):
                 self.d_type = 'siamese'
 
         message = {
-            "Animals": [{ 
-                "dType": "dog", 
-                "likesDogFood": True, 
-                "Name": "Fido" 
-            },{ 
-                "dType": "cat", 
-                "likesMice": False, 
-                "dislikes": { 
-                    "dType": "dog", 
-                    "likesDogFood": True, 
-                    "Name": "Angry" 
-                }, 
-                "Name": "Felix" 
-            },{ 
-                "dType": "siamese", 
-                "Color": "grey", 
-                "likesMice": True, 
-                "Name": "Finch" 
+            "Animals": [{
+                "dType": "dog",
+                "likesDogFood": True,
+                "Name": "Fido"
+            },{
+                "dType": "cat",
+                "likesMice": False,
+                "dislikes": {
+                    "dType": "dog",
+                    "likesDogFood": True,
+                    "Name": "Angry"
+                },
+                "Name": "Felix"
+            },{
+                "dType": "siamese",
+                "Color": "grey",
+                "likesMice": True,
+                "Name": "Finch"
             }]
         }
 
@@ -1746,23 +2052,37 @@ class TestRuntimeDeserialized(unittest.TestCase):
         self.assertIsInstance(animal, Animal)
         self.assertEquals(animal.name, "Didier")
 
+    @unittest.skipIf(sys.version_info < (3,4), "assertLogs not supported before 3.4")
+    def test_polymorphic_missing_info(self):
+        class Animal(Model):
+
+            _attribute_map = {
+                "name":{"key":"Name", "type":"str"},
+                "d_type":{"key":"dType", "type":"str"}
+            }
+
+            _subtype_map = {
+                'd_type': {}
+            }
+
+            def __init__(self, name=None):
+                self.name = name
+
         message = {
             "Name": "Didier"
         }
-        with self.assertRaises(DeserializationError) as err:
+        with self.assertLogs('msrest.serialization', level="WARNING"):
             animal = self.d(Animal, message)
-        exception = err.exception
-        self.assertIn(str(exception), "Discriminator d_type cannot be absent or null")
+        self.assertEquals(animal.name, "Didier")
 
-        message = { 
-            "dType": "Penguin", 
-            "likesDogFood": True, 
-            "Name": "Fido" 
+        message = {
+            "dType": "Penguin",
+            "likesDogFood": True,
+            "Name": "Fido"
         }
-        with self.assertRaises(DeserializationError) as err:
+        with self.assertLogs('msrest.serialization', level="WARNING"):
             animal = self.d(Animal, message)
-        exception = err.exception
-        self.assertIn(str(exception), "Subtype value Penguin has no mapping")
+        self.assertEquals(animal.name, "Fido")
 
     def test_polymorphic_deserialization_with_escape(self):
 
@@ -1793,10 +2113,10 @@ class TestRuntimeDeserialized(unittest.TestCase):
                 super(Dog, self).__init__(name)
                 self.d_type = 'dog'
 
-        message = { 
-            "odata.type": "dog", 
-            "likesDogFood": True, 
-            "Name": "Fido" 
+        message = {
+            "odata.type": "dog",
+            "likesDogFood": True,
+            "Name": "Fido"
             }
 
         self.d.dependencies = {
@@ -1806,6 +2126,173 @@ class TestRuntimeDeserialized(unittest.TestCase):
 
         self.assertIsInstance(animal, Dog)
         self.assertTrue(animal.likes_dog_food)
+
+    def test_additional_properties(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"},
+                'additional_properties': {'key': '', 'type': '{object}'}
+            }
+
+            def __init__(self, name=None, additional_properties=None):
+                self.name = name
+                self.additional_properties = additional_properties
+
+        message = {
+            "Name": "test",
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        d = Deserializer({'AdditionalTest': AdditionalTest})
+
+        m = d('AdditionalTest', message)
+
+        self.assertEquals(m.name, "test")
+        self.assertEquals(m.additional_properties['PropInt'], 2)
+        self.assertEquals(m.additional_properties['PropStr'], "AdditionalProperty")
+        self.assertEquals(m.additional_properties['PropArray'], [1,2,3])
+        self.assertEquals(m.additional_properties['PropDict'], {"a": "b"})
+
+    def test_additional_properties_declared(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"},
+                'additional_properties': {'key': 'AddProp', 'type': '{object}'}
+            }
+
+            def __init__(self, name=None, additional_properties=None):
+                self.name = name
+                self.additional_properties = additional_properties
+
+        message = {
+            "Name": "test",
+            "AddProp": {
+                "PropInt": 2,
+                "PropStr": "AdditionalProperty",
+                "PropArray": [1,2,3],
+                "PropDict": {"a": "b"}
+            }
+        }
+
+        d = Deserializer({'AdditionalTest': AdditionalTest})
+
+        m = d('AdditionalTest', message)
+
+        self.assertEquals(m.name, "test")
+        self.assertEquals(m.additional_properties['PropInt'], 2)
+        self.assertEquals(m.additional_properties['PropStr'], "AdditionalProperty")
+        self.assertEquals(m.additional_properties['PropArray'], [1,2,3])
+        self.assertEquals(m.additional_properties['PropDict'], {"a": "b"})
+
+
+    def test_additional_properties_not_configured(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"}
+            }
+
+            def __init__(self, name=None):
+                self.name = name
+
+        message = {
+            "Name": "test",
+            "PropInt": 2,
+            "PropStr": "AdditionalProperty",
+            "PropArray": [1,2,3],
+            "PropDict": {"a": "b"}
+        }
+
+        d = Deserializer({'AdditionalTest': AdditionalTest})
+
+        m = d('AdditionalTest', message)
+
+        self.assertEquals(m.name, "test")
+        self.assertEquals(m.additional_properties['PropInt'], 2)
+        self.assertEquals(m.additional_properties['PropStr'], "AdditionalProperty")
+        self.assertEquals(m.additional_properties['PropArray'], [1,2,3])
+        self.assertEquals(m.additional_properties['PropDict'], {"a": "b"})
+
+    def test_additional_properties_flattening(self):
+
+        class AdditionalTest(Model):
+
+            _attribute_map = {
+                "name": {"key":"Name", "type":"str"},
+                "content" :{"key":"Properties.Content", "type":"str"}
+            }
+
+            def __init__(self, name=None, content=None):
+                super(AdditionalTest, self).__init__()
+                self.name = name
+                self.content = content
+
+        message = {
+            "Name": "test",
+            "Properties": {
+                "Content": "Content",
+                "Unknown": "Unknown"
+            }
+        }
+
+        d = Deserializer({'AdditionalTest': AdditionalTest})
+
+        m = d('AdditionalTest', message)
+
+        self.assertEquals(m.name, "test")
+        self.assertEquals(m.content, "Content")
+        self.assertEquals(m.additional_properties, {})
+
+    def test_attr_enum(self):
+        """
+        Test deserializing with Enum.
+        """
+
+        test_obj = type("TestEnumObj", (Model,), {"_attribute_map":None})
+        test_obj._attribute_map = {
+            "abc":{"key":"ABC", "type":"TestEnum"}
+        }
+        class TestEnum(Enum):
+            val = "Value"
+
+        deserializer = Deserializer({
+            'TestEnumObj': test_obj,
+            'TestEnum': TestEnum
+        })
+
+        obj = deserializer('TestEnumObj', {
+            'ABC': 'Value'
+        })
+
+        self.assertEquals(obj.abc, TestEnum.val)
+
+        obj = deserializer('TestEnumObj', {
+            'ABC': 'azerty'
+        })
+
+        self.assertEquals(obj.abc, 'azerty')
+
+        class TestEnum2(Enum):
+            val2 = "Value"
+
+        deserializer = Deserializer({
+            'TestEnumObj': test_obj,
+            'TestEnum': TestEnum,
+            'TestEnum2': TestEnum2
+        })
+
+        obj = deserializer('TestEnumObj', {
+            'ABC': TestEnum2.val2
+        })
+        self.assertEquals(obj.abc, TestEnum.val)
 
 class TestModelInstanceEquality(unittest.TestCase):
 

@@ -2,50 +2,70 @@ dist: trusty
 sudo: required
 language: python
 cache: pip
-services:
-  - docker
-matrix:
+_test: &_test
+  install:
+    - pip install tox
+  script:
+    - tox
+  after_success:
+    - bash <(curl -s https://codecov.io/bash) -e TOXENV -f $TRAVIS_BUILD_DIR/coverage.xml
+_autorest_install: &_autorest_install
+  before_install:
+  - git clone --recursive https://github.com/Azure/autorest.python.git
+  - sudo apt-get install libunwind8-dev
+  - nvm install 8
+  - pushd autorest.python
+  - npm install # Install test server pre-requisites
+  - popd
+jobs:
   include:
-    - python: 2.7
+    - stage: MyPy
+      python: 3.5
+      install:
+        - pip install mypy
+      script:
+        - mypy msrest --ignore-missing-imports
+    - stage: Test
+      python: 2.7
       env: TOXENV=py27
-    - python: 3.3
-      env: TOXENV=py33
-    - python: 3.4
+      <<: *_test
+    - stage: Test
+      python: 3.4
       env: TOXENV=py34
-    - python: 3.5
+      <<: *_test
+    - stage: Test
+      python: 3.5
       env: TOXENV=py35
-    - python: 3.6
+      <<: *_test
+    - stage: Test
+      python: 3.6
       env: TOXENV=py36
-    - python: 2.7
+      <<: *_test
+    - stage: Test
+      python: 2.7
       env: TOXENV=py27-autorest
-    - python: 3.3
-      env: TOXENV=py33-autorest
-    - python: 3.4
+      <<: *_autorest_install
+      <<: *_test
+    - stage: Test
+      python: 3.4
       env: TOXENV=py34-autorest
-    - python: 3.5
+      <<: *_autorest_install
+      <<: *_test
+    - stage: Test
+      python: 3.5
       env: TOXENV=py35-autorest
-    - python: 3.6
+      <<: *_autorest_install
+      <<: *_test
+    - stage: Test
+      python: 3.6
       env: TOXENV=py36-autorest
+      <<: *_autorest_install
+      <<: *_test
   allow_failures:
     - env: TOXENV=py27-autorest
-    - env: TOXENV=py33-autorest
     - env: TOXENV=py34-autorest
     - env: TOXENV=py35-autorest
     - env: TOXENV=py36-autorest
-before_install:
-  - docker pull lmazuel/autorest-test-server
-  - docker run -p 3000:3000 lmazuel/autorest-test-server &
-  - git clone https://github.com/Azure/autorest.python.git
-  - cd autorest.python
-  - sudo apt-get install libunwind8-dev
-  - nvm install 7
-  - npm install # Install test server pre-requisites
-install:
-  - pip install tox
-script:
-  - tox
-after_success:
-  - bash <(curl -s https://codecov.io/bash) -e TOXENV -f $TRAVIS_BUILD_DIR/coverage.xml
 deploy:
   provider: pypi
   user: Laurent.Mazuel

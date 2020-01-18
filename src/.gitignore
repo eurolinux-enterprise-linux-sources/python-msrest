@@ -1,7 +1,14 @@
 __pycache__
-venv*
+env*
+.venv
 *.egg-info
 .tox
-test/.coverage
+.coverage
+coverage.xml
 *.pyc
 .idea
+build/
+dist/
+.cache
+.pytest_cache
+.mypy_cache

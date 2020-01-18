@@ -24,13 +24,13 @@
 #
 # --------------------------------------------------------------------------
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='msrest',
-    version='0.4.18',
+    version='0.5.4',
     author='Microsoft Corporation',
-    packages=['msrest'],
+    packages=find_packages(exclude=["tests", "tests.*"]),
     url=("https://github.com/Azure/msrest-for-python"),
     license='MIT License',
     description='AutoRest swagger generator Python client runtime.',
@@ -41,19 +41,19 @@ setup(
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'License :: OSI Approved :: MIT License',
         'Topic :: Software Development'],
     install_requires=[
-        "requests~=2.14",
+        "requests~=2.16",
         "requests_oauthlib>=0.5.0",
-        "isodate>=0.5.4",
+        "isodate>=0.6.0",
         "certifi>=2017.4.17",
     ],
     extras_require={
         ":python_version<'3.4'": ['enum34>=1.0.4'],
+        ":python_version<'3.5'": ['typing'],
     }
 )

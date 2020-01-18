@@ -33,6 +33,7 @@ try:
     from unittest import mock
 except ImportError:
     import mock
+import xml.etree.ElementTree as ET
 
 from msrest.pipeline import (
     ClientRequest,
@@ -44,14 +45,6 @@ from msrest import Configuration
 
 class TestClientRequest(unittest.TestCase):
 
-    def test_request_headers(self):
-
-        request = ClientRequest()
-        request.add_header("a", 1)
-        request.add_headers({'b':2, 'c':3})
-
-        self.assertEqual(request.headers, {'a':1, 'b':2, 'c':3})
-
     def test_request_data(self):
 
         request = ClientRequest()
@@ -60,6 +53,13 @@ class TestClientRequest(unittest.TestCase):
 
         self.assertEqual(request.data, json.dumps(data))
         self.assertEqual(request.headers.get('Content-Length'), '17')
+
+    def test_request_xml(self):
+        request = ClientRequest()
+        data = ET.Element("root")
+        request.add_content(data)
+
+        assert request.data == b"<?xml version='1.0' encoding='utf8'?>\n<root />"
 
     def test_request_url_with_params(self):
 

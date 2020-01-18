@@ -42,10 +42,11 @@ from msrest.authentication import (
     BasicTokenAuthentication,
     OAuthTokenAuthentication,
     ApiKeyCredentials,
-    CognitiveServicesCredentials
+    CognitiveServicesCredentials,
+    TopicCredentials
 )
 
-from requests import Request
+from requests import Request, PreparedRequest
 
 
 class TestAuthentication(unittest.TestCase):
@@ -90,11 +91,16 @@ class TestAuthentication(unittest.TestCase):
 
     def test_token_auth(self):
 
-        token =  {"my_token":123}
+        token = {
+            'access_token': '123456789'
+        }
         auth = OAuthTokenAuthentication("client_id", token)
         session = auth.signed_session()
 
-        self.assertEqual(session.token, token)
+        request = PreparedRequest()
+        request.prepare("GET", "https://example.org")
+        session.auth(request)
+        assert request.headers == {'Authorization': 'Bearer 123456789'}
 
     def test_apikey_auth(self):
         auth = ApiKeyCredentials(
@@ -121,6 +127,11 @@ class TestAuthentication(unittest.TestCase):
         prep_req = session.prepare_request(self.request)
         self.assertDictContainsSubset({'Ocp-Apim-Subscription-Key' : 'mysubkey'}, prep_req.headers)
 
+    def test_eventgrid_auth(self):
+        auth = TopicCredentials("mytopickey")
+        session = auth.signed_session()
+        prep_req = session.prepare_request(self.request)
+        self.assertDictContainsSubset({'aeg-sas-key' : 'mytopickey'}, prep_req.headers)
 
 if __name__ == '__main__':
     unittest.main()

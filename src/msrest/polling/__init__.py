@@ -1,4 +1,4 @@
-﻿# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 #
 # Copyright (c) Microsoft Corporation. All rights reserved.
 #
@@ -23,18 +23,6 @@
 # IN THE SOFTWARE.
 #
 # --------------------------------------------------------------------------
+from .poller import LROPoller, NoPolling, PollingMethod
 
-from .configuration import Configuration
-from .service_client import ServiceClient, SDKClient
-from .serialization import Serializer, Deserializer
-from .version import msrest_version
-
-__all__ = [
-    "ServiceClient",
-    "SDKClient",
-    "Serializer",
-    "Deserializer",
-    "Configuration"
-    ]
-
-__version__ = msrest_version
+__all__ = ['LROPoller', 'NoPolling', 'PollingMethod']
