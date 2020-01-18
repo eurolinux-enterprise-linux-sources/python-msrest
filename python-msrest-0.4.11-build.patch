@@ -1,0 +1,36 @@
+diff -up ./setup.py.orig ./setup.py
+--- ./setup.py.orig	2017-06-21 21:09:56.000000000 +0200
++++ ./setup.py	2017-06-30 14:09:35.185100223 +0200
+@@ -25,6 +25,17 @@
+ # --------------------------------------------------------------------------
+ 
+ from setuptools import setup
++import sys
++
++requirements = [
++    "requests",
++    "requests_oauthlib>=0.5.0",
++    "isodate>=0.5.4",
++    "certifi"
++]
++if sys.version_info[0] == 2:
++    requirements.append('enum34>=1.0.4')
++
+ 
+ setup(
+     name='msrest',
+@@ -47,13 +58,5 @@ setup(
+         'Programming Language :: Python :: 3.6',
+         'License :: OSI Approved :: MIT License',
+         'Topic :: Software Development'],
+-    install_requires=[
+-        "requests~=2.14",
+-        "requests_oauthlib>=0.5.0",
+-        "isodate>=0.5.4",
+-        "certifi>=2017.4.17",
+-    ],
+-    extras_require={
+-        ":python_version<'3.4'": ['enum34>=1.0.4'],
+-    }
++    install_requires=requirements
+ )
